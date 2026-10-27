@@ -1,5 +1,7 @@
 # Continuous Motion Substrate
 
+<img width="1024" height="576" alt="A glowing orb inside a brass-and-glass chamber, leaving a spiralling motion trail" src="docs/banner.jpg" />
+
 > The motion counterpart to [ChronoSoul](https://github.com/AaronGrace978/continuous-emotional-substrate): a persistent, always-integrating state vector for agents that never freeze between frames.
 
 LLM agents freeze between turns. They exist only while a message is being processed, and they cold-start on the next one.
@@ -257,4 +259,4 @@ Also measured, and asserted by the tests:
 
 ## License
 
-MIT, see `LICENSE`. ChronoSoul is a separate project under its own license; this repo imports none of its code and only talks to it through the optional bridge.
+GPL-3.0, the same license as ChronoSoul. See `LICENSE`.
