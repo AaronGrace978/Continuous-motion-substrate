@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+motion_providers.json
+chronosoul_providers.json
+*.json.tmp
+*.db
+*.db-wal
+*.db-shm
+.env
+*.log
+.venv/

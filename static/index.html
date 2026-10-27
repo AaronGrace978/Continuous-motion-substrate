@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Continuous Motion Substrate</title>
+<style>
+  :root { --bg:#0b0f17; --panel:#121826; --line:#1f2a3d; --text:#d7deea; --dim:#7c8aa5; --accent:#7cc4ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; }
+  header h1 { margin:0; font-size:17px; font-weight:600; }
+  header span { color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; padding:16px 20px; }
+  .stage { background:var(--panel); border:1px solid var(--line); border-radius:10px; position:relative; }
+  canvas { width:100%; height:auto; aspect-ratio:1/1; display:block; cursor:crosshair; border-radius:10px; }
+  .hint { position:absolute; left:12px; bottom:10px; color:var(--dim); font-size:12px; pointer-events:none; }
+  aside { display:flex; flex-direction:column; gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); font-weight:600; }
+  label { display:flex; justify-content:space-between; font-size:13px; margin-top:6px; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  button { background:#1a2333; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; font-size:13px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0; font-size:13px; }
+  dt { color:var(--dim); } dd { margin:0; text-align:right; font-variant-numeric:tabular-nums; }
+  .legend { display:grid; grid-template-columns:16px 1fr; gap:4px 8px; font-size:12px; color:var(--dim); align-items:center; }
+  .sw { width:12px; height:12px; border-radius:50%; }
+  @media (max-width: 800px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Continuous Motion Substrate</h1>
+  <span>the motion counterpart to ChronoSoul: state that keeps moving between turns</span>
+</header>
+<main>
+  <div class="stage">
+    <canvas id="c" width="900" height="900"></canvas>
+    <div class="hint">Click to set a target. The dot keeps integrating at the server tick rate whether you act or not.</div>
+  </div>
+  <aside>
+    <div class="card">
+      <h2>Affect (ChronoSoul input)</h2>
+      <div id="source" style="font-size:13px;color:var(--dim)">source: …</div>
+      <label>valence <span id="vv">0</span></label>
+      <input id="valence" type="range" min="-1" max="1" step="0.01" value="0.1">
+      <label>arousal <span id="av">0</span></label>
+      <input id="arousal" type="range" min="0" max="1" step="0.01" value="0.25">
+      <div class="row">
+        <button data-preset="calm">Calm</button>
+        <button data-preset="neutral">Neutral</button>
+        <button data-preset="anxious">Anxious</button>
+        <button id="release">Release</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Input</h2>
+      <div class="row">
+        <button id="wander">Moving target</button>
+        <button id="kick">Push</button>
+        <button id="reset">Reset</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Spring (after modulation)</h2>
+      <dl>
+        <dt>stiffness k</dt><dd id="k">–</dd>
+        <dt>mass m</dt><dd id="m">–</dd>
+        <dt>damping ratio ζ</dt><dd id="z">–</dd>
+        <dt>momentum gain g</dt><dd id="g">–</dd>
+        <dt>jitter σ</dt><dd id="j">–</dd>
+        <dt>natural freq ω</dt><dd id="w">–</dd>
+      </dl>
+    </div>
+    <div class="card">
+      <h2>Substrate</h2>
+      <dl>
+        <dt>tick</dt><dd id="tick">–</dd>
+        <dt>measured rate</dt><dd id="hz">–</dd>
+        <dt>speed</dt><dd id="speed">–</dd>
+        <dt>trajectory hot / cold</dt><dd id="tiers">–</dd>
+      </dl>
+    </div>
+    <div class="card legend">
+      <span class="sw" style="background:#7cc4ff"></span><span>state (dead-reckoned between polls)</span>
+      <span class="sw" style="border:2px solid #ffd27c"></span><span>target (input)</span>
+      <span class="sw" style="border:2px dashed #b48cff"></span><span>led target (anticipation)</span>
+      <span class="sw" style="border:2px solid #6fdc9a"></span><span>predicted state in 0.5 s</span>
+    </div>
+  </aside>
+</main>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const SPAN = 1.25;
+let state = null, stateAt = 0, trail = [];
+let lastTick = null, lastTickWall = 0, hz = 0;
+let wander = false, wanderT = 0;
+
+const toPx = (x, y) => [(x / SPAN * 0.5 + 0.5) * canvas.width, (0.5 - y / SPAN * 0.5) * canvas.height];
+const fromPx = (px, py) => [(px / canvas.width - 0.5) * 2 * SPAN, (0.5 - py / canvas.height) * 2 * SPAN];
+const fmt = (x, d = 2) => (x === undefined || x === null) ? '–' : Number(x).toFixed(d);
+const post = (url, body) => fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})}).then(r => r.json());
+
+async function pollState() {
+  try {
+    const s = await (await fetch('/state')).json();
+    const now = performance.now();
+    if (lastTick !== null && s.tick > lastTick) {
+      const inst = (s.tick - lastTick) / ((now - lastTickWall) / 1000);
+      hz = hz ? hz * 0.8 + inst * 0.2 : inst;
+      lastTick = s.tick; lastTickWall = now;
+    } else if (lastTick === null || s.tick < lastTick) { lastTick = s.tick; lastTickWall = now; }
+    state = s; stateAt = now;
+    updatePanel(s);
+  } catch (e) {}
+}
+
+async function pollTrail() {
+  try {
+    const t = await (await fetch('/trajectory?seconds=4&rate_hz=60&include_samples=false')).json();
+    trail = t.frames.map(f => f.position);
+  } catch (e) {}
+}
+
+function updatePanel(s) {
+  const p = s.params;
+  document.getElementById('k').textContent = fmt(p.stiffness);
+  document.getElementById('m').textContent = fmt(p.mass);
+  document.getElementById('z').textContent = fmt(p.damping_ratio);
+  document.getElementById('g').textContent = fmt(p.momentum_gain);
+  document.getElementById('j').textContent = fmt(p.jitter, 3);
+  document.getElementById('w').textContent = fmt(p.natural_frequency) + ' rad/s';
+  document.getElementById('tick').textContent = s.tick;
+  document.getElementById('hz').textContent = fmt(hz, 1) + ' Hz';
+  document.getElementById('speed').textContent = fmt(s.speed, 3);
+  document.getElementById('tiers').textContent = s.trajectory.hot + ' / ' + s.trajectory.cold;
+  document.getElementById('source').textContent = 'source: ' + s.affect_source;
+  if (document.activeElement.type !== 'range') {
+    document.getElementById('valence').value = s.affect.valence;
+    document.getElementById('arousal').value = s.affect.arousal;
+  }
+  document.getElementById('vv').textContent = fmt(s.affect.valence);
+  document.getElementById('av').textContent = fmt(s.affect.arousal);
+}
+
+function ring(x, y, r, color, dashed) {
+  const [px, py] = toPx(x, y);
+  ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2);
+  ctx.setLineDash(dashed ? [5, 4] : []); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+}
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#1a2436'; ctx.lineWidth = 1;
+  for (let g = -1; g <= 1; g += 0.5) {
+    let [x0, y0] = toPx(g, -SPAN), [x1, y1] = toPx(g, SPAN);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    [x0, y0] = toPx(-SPAN, g); [x1, y1] = toPx(SPAN, g);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+  if (state && state.dims >= 2) {
+    for (let i = 1; i < trail.length; i++) {
+      const [ax, ay] = toPx(trail[i - 1][0], trail[i - 1][1]);
+      const [bx, by] = toPx(trail[i][0], trail[i][1]);
+      ctx.strokeStyle = `rgba(124,196,255,${(i / trail.length) * 0.7})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    }
+    ring(state.target[0], state.target[1], 12, '#ffd27c');
+    ring(state.driven_target[0], state.driven_target[1], 8, '#b48cff', true);
+    ring(state.prediction.position[0], state.prediction.position[1], 10, '#6fdc9a');
+    const lag = Math.min(0.15, (performance.now() - stateAt) / 1000);
+    const x = state.position[0] + state.velocity[0] * lag;
+    const y = state.position[1] + state.velocity[1] * lag;
+    const [px, py] = toPx(x, y);
+    const v = state.affect.valence, a = state.affect.arousal;
+    const hue = 200 + (-v) * 70 * Math.min(1, a * 1.6);
+    ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2);
+    ctx.fillStyle = `hsl(${hue},80%,68%)`; ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 24; ctx.fill(); ctx.shadowBlur = 0;
+  }
+  requestAnimationFrame(draw);
+}
+
+canvas.addEventListener('click', ev => {
+  const r = canvas.getBoundingClientRect();
+  const [x, y] = fromPx((ev.clientX - r.left) * canvas.width / r.width, (ev.clientY - r.top) * canvas.height / r.height);
+  wander = false; document.getElementById('wander').classList.remove('on');
+  post('/target', {target: [x, y]});
+});
+
+const presets = {calm: [0.6, 0.0], neutral: [0.0, 0.4], anxious: [-0.8, 0.95]};
+document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => {
+  const [v, a] = presets[b.dataset.preset]; post('/affect', {valence: v, arousal: a});
+}));
+['valence', 'arousal'].forEach(id => document.getElementById(id).addEventListener('input', () => {
+  post('/affect', {valence: +document.getElementById('valence').value, arousal: +document.getElementById('arousal').value});
+}));
+document.getElementById('release').onclick = () => post('/affect', {release: true});
+document.getElementById('reset').onclick = () => { wander = false; document.getElementById('wander').classList.remove('on'); post('/reset', {}); };
+document.getElementById('kick').onclick = () => { const t = Math.random() * Math.PI * 2; post('/target', {impulse: [Math.cos(t) * 3, Math.sin(t) * 3]}); };
+document.getElementById('wander').onclick = ev => { wander = !wander; ev.target.classList.toggle('on', wander); };
+
+setInterval(() => {
+  if (!wander || !state) return;
+  wanderT += 0.1;
+  post('/target', {target: [0.8 * Math.sin(wanderT * 0.9), 0.6 * Math.sin(wanderT * 1.3 + 0.7)]});
+}, 100);
+setInterval(pollState, 100);
+setInterval(pollTrail, 250);
+pollState(); pollTrail(); requestAnimationFrame(draw);
+</script>
+</body>
+</html>

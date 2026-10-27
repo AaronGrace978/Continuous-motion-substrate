@@ -1,0 +1,7 @@
+# The substrate, trajectory store, momentum layer and ChronoSoul bridge are standard library only.
+# Server + visualizer:
+fastapi>=0.110
+uvicorn>=0.27
+# Tests:
+pytest>=8.0
+httpx>=0.27  # FastAPI TestClient
